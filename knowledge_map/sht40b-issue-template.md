@@ -96,3 +96,4 @@ Implement test case for SHT40B temperature and humidity sensor readout on the ma
 2. Authenticate: `gh auth login`
 3. Run: `.\scripts\create-sht40b-issue.ps1`
 
+
