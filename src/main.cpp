@@ -83,7 +83,7 @@ static void taskSht40Read(void *pv)
   Wire.setClock(100000);
   bool sht4Initialized = false;
 
-  if (sht4.begin(0x45))
+  if (sht4.begin(&Wire))
   {
     sht4.setPrecision(SHT4X_HIGH_PRECISION);
     sht4.setHeater(SHT4X_NO_HEATER);
@@ -104,7 +104,7 @@ static void taskSht40Read(void *pv)
     {
       if ((retryCounter++ % 10) == 0)
       {
-        if (sht4.begin(0x45))
+        if (sht4.begin(&Wire))
         {
           sht4.setPrecision(SHT4X_HIGH_PRECISION);
           sht4.setHeater(SHT4X_NO_HEATER);

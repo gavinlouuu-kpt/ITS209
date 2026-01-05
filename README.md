@@ -134,3 +134,9 @@ The MAX31865 sensor uses SPI communication. Default pin configuration:
 
 
 
+
+
+
+
+
+
