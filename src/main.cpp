@@ -15,6 +15,10 @@
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 
+// I2C slave configuration (async_ads device)
+#define I2C_SLAVE_ADDR 0x08 // Address of the async_ads slave device
+#define CMD_READ_DATA 0x04  // Read data command
+
 // MAX31865 (software SPI) pins and constants
 #define MAX31865_CS 5
 #define MAX31865_MOSI 23
@@ -135,6 +139,61 @@ static void taskSht40Read(void *pv)
   }
 }
 
+static void taskI2CSlaveRead(void *pv)
+{
+  // I2C bus is already initialized by taskSht40Read, so we use the shared Wire instance
+  // Wait a bit to ensure I2C is initialized
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  for (;;)
+  {
+    // Request data from slave
+    Wire.beginTransmission(I2C_SLAVE_ADDR);
+    Wire.write(CMD_READ_DATA);
+    uint8_t result = Wire.endTransmission();
+
+    if (result != 0)
+    {
+      Serial.printf("I2C Slave: Failed to request data (error: %d)\n", result);
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
+
+    // Request 8 bytes of response data
+    uint8_t bytesReceived = Wire.requestFrom(I2C_SLAVE_ADDR, 8);
+
+    if (bytesReceived == 8)
+    {
+      uint8_t response[8];
+      for (int i = 0; i < 8; i++)
+      {
+        response[i] = Wire.read();
+      }
+
+      // Parse the response according to slave's format
+      uint16_t setting = (response[0] << 8) | response[1];
+      uint32_t timestamp = (response[2] << 24) | (response[3] << 16) | (response[4] << 8) | response[5];
+      int16_t raw_value = (response[6] << 8) | response[7];
+
+      // Check if data is valid (non-zero)
+      if (setting != 0 || timestamp != 0 || raw_value != 0)
+      {
+        Serial.printf("I2C Slave: Setting=%d, Timestamp=%lu, Raw=%d\n", setting, timestamp, raw_value);
+      }
+      else
+      {
+        Serial.println("I2C Slave: No new data available (experiment might be idle)");
+      }
+    }
+    else
+    {
+      Serial.printf("I2C Slave: Expected 8 bytes, received %d bytes\n", bytesReceived);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Read every 2 seconds
+  }
+}
+
 static void taskSol1Toggle(void *pv)
 {
   for (;;)
@@ -198,6 +257,7 @@ void setup()
   // Create tasks
   xTaskCreate(taskMax31865Read, "tMAX", 4096, nullptr, 2, nullptr);
   xTaskCreate(taskSht40Read, "tSHT40", 4096, nullptr, 2, nullptr);
+  xTaskCreate(taskI2CSlaveRead, "tI2CSlave", 4096, nullptr, 2, nullptr);
   xTaskCreate(taskSol1Toggle, "tSOL1", 2048, nullptr, 1, nullptr);
   xTaskCreate(taskSol2Toggle, "tSOL2", 2048, nullptr, 1, nullptr);
   xTaskCreate(taskHeaterToggle, "tHEAT", 2048, nullptr, 1, nullptr);
