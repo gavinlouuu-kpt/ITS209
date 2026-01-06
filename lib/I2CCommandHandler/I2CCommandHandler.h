@@ -27,6 +27,7 @@ class FileManager;
 // Callback function types for dependency injection
 using AddLogFn = void (*)(const String&);
 using GetLogStatsFn = String (*)();
+using GetCurrentSensorReadingFn = int16_t (*)(); // Returns current sensor reading from ADS1115
 
 class I2CCommandHandler {
 public:
@@ -46,6 +47,7 @@ public:
         bool& networkAvailable,
         AddLogFn addLog,
         GetLogStatsFn getLogStats,
+        GetCurrentSensorReadingFn getCurrentSensorReading,
         FileManager& fileManager
     );
 
@@ -73,6 +75,7 @@ private:
     // Callbacks
     AddLogFn _addDebugLog;
     GetLogStatsFn _getLogStats;
+    GetCurrentSensorReadingFn _getCurrentSensorReading;
     
     // File manager reference
     FileManager& _fileManager;

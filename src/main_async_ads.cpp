@@ -150,6 +150,14 @@ String getLogStats()
     return "Logs: " + String(totalEntries) + " entries, ~" + String(memoryUsed) + " bytes";
 }
 
+// Function to get current sensor reading (for I2C command handler)
+int16_t getCurrentSensorReading()
+{
+    // Return current sensor reading from ADS1115
+    // This is safe to call after setup() completes
+    return ads.getLastConversionResults();
+}
+
 // Function to add debug log entry with priority (to reduce spam during experiments)
 void addDebugLogPriority(const String &message, bool highPriority = false)
 {
@@ -181,6 +189,7 @@ I2CCommandHandler i2cHandler(
     networkAvailable,
     addDebugLog,
     getLogStats,
+    getCurrentSensorReading,
     fileManager);
 
 // Wrapper for receive event

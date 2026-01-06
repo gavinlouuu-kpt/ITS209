@@ -19,6 +19,7 @@ I2CCommandHandler::I2CCommandHandler(
     bool& networkAvailable,
     AddLogFn addLog,
     GetLogStatsFn getLogStats,
+    GetCurrentSensorReadingFn getCurrentSensorReading,
     FileManager& fileManager)
     : _expState(expState),
       _currentExpName(currentExpName),
@@ -35,6 +36,7 @@ I2CCommandHandler::I2CCommandHandler(
       _networkAvailable(networkAvailable),
       _addDebugLog(addLog),
       _getLogStats(getLogStats),
+      _getCurrentSensorReading(getCurrentSensorReading),
       _fileManager(fileManager)
 {
     // Constructor initialization
@@ -57,11 +59,15 @@ void I2CCommandHandler::receiveEvent(int byteCount)
     }
 
     uint8_t command = Wire.read();
-    _lastReceivedCommand = command;
+    _lastReceivedCommand = command; // Store command for requestEvent to use
     
     if (command != CMD_READ_DATA && command != CMD_READ_LOGS)
     {
         _addDebugLog("I2C cmd received: 0x" + String(command, HEX));
+    }
+    else
+    {
+        _addDebugLog("I2C cmd received: 0x" + String(command, HEX) + " (silent mode)");
     }
 
     switch (command)
@@ -252,6 +258,12 @@ void I2CCommandHandler::requestEvent()
     _lastI2CActivity = now;
     _i2cRequestCount++;
     
+    // Debug: log request event with last command
+    if (_lastReceivedCommand != 0)
+    {
+        _addDebugLog("I2C: requestEvent for cmd 0x" + String(_lastReceivedCommand, HEX));
+    }
+    
     if (now - _i2cMonitorWindow > 1000)
     {
         if (_i2cRequestCount > 50)
@@ -261,6 +273,15 @@ void I2CCommandHandler::requestEvent()
         }
         _i2cRequestCount = 0;
         _i2cMonitorWindow = now;
+    }
+    
+    // Validate that we have a command to respond to
+    if (_lastReceivedCommand == 0)
+    {
+        _addDebugLog("I2C: requestEvent called but no command stored");
+        uint8_t response[8] = {0};
+        Wire.write(response, 8);
+        return;
     }
     
     if (_lastReceivedCommand == CMD_READ_LOGS)
@@ -373,58 +394,52 @@ void I2CCommandHandler::requestEvent()
     {
         uint8_t response[16] = {0}; // Larger response for IP address
 
-        // Check if network is available first
-        if (_networkAvailable)
+        // Check actual SoftAP state first (regardless of networkAvailable flag)
+        String apSSID = WiFi.softAPSSID();
+        IPAddress softAPIP = WiFi.softAPIP();
+        
+        _addDebugLog("IP request: AP SSID='" + apSSID + "', AP IP=" + softAPIP.toString() + ", networkAvailable=" + String(_networkAvailable));
+
+        // Check if softAP is active (AP mode) - this is the primary mode for this device
+        if (apSSID.length() > 0 && softAPIP[0] != 0)
         {
-            // Debug logging
-            String apSSID = WiFi.softAPSSID();
-            IPAddress softAPIP = WiFi.softAPIP();
-            _addDebugLog("IP request: AP SSID='" + apSSID + "', AP IP=" + softAPIP.toString());
+            response[0] = 1; // Connected status (AP mode)
+            response[1] = softAPIP[0]; // IP address bytes
+            response[2] = softAPIP[1];
+            response[3] = softAPIP[2];
+            response[4] = softAPIP[3];
 
-            // Check if softAP is active (AP mode) - this is the primary mode for this device
-            if (apSSID.length() > 0 && softAPIP[0] != 0)
+            // Include softAP SSID
+            response[5] = min(apSSID.length(), (size_t)10); // SSID length (max 10 chars in response)
+            for (int i = 0; i < min(apSSID.length(), (size_t)10); i++)
             {
-                response[0] = 1; // Connected status (AP mode)
-                response[1] = softAPIP[0]; // IP address bytes
-                response[2] = softAPIP[1];
-                response[3] = softAPIP[2];
-                response[4] = softAPIP[3];
+                response[6 + i] = apSSID[i];
+            }
+            _addDebugLog("IP response: SoftAP active, IP=" + softAPIP.toString());
+        }
+        // Fallback: check for STA mode connection (though this device primarily operates in AP mode)
+        else if (WiFi.status() == WL_CONNECTED)
+        {
+            IPAddress ip = WiFi.localIP();
+            response[0] = 1; // Connected status
+            response[1] = ip[0]; // IP address bytes
+            response[2] = ip[1];
+            response[3] = ip[2];
+            response[4] = ip[3];
 
-                // Include softAP SSID
-                response[5] = min(apSSID.length(), (size_t)10); // SSID length (max 10 chars in response)
-                for (int i = 0; i < min(apSSID.length(), (size_t)10); i++)
-                {
-                    response[6 + i] = apSSID[i];
-                }
-            }
-            // Fallback: check for STA mode connection (though this device primarily operates in AP mode)
-            else if (WiFi.status() == WL_CONNECTED)
+            // Also include SSID length and first part of SSID
+            String ssid = WiFi.SSID();
+            response[5] = min(ssid.length(), (size_t)10); // SSID length (max 10 chars in response)
+            for (int i = 0; i < min(ssid.length(), (size_t)10); i++)
             {
-                IPAddress ip = WiFi.localIP();
-                response[0] = 1; // Connected status
-                response[1] = ip[0]; // IP address bytes
-                response[2] = ip[1];
-                response[3] = ip[2];
-                response[4] = ip[3];
-
-                // Also include SSID length and first part of SSID
-                String ssid = WiFi.SSID();
-                response[5] = min(ssid.length(), (size_t)10); // SSID length (max 10 chars in response)
-                for (int i = 0; i < min(ssid.length(), (size_t)10); i++)
-                {
-                    response[6 + i] = ssid[i];
-                }
+                response[6 + i] = ssid[i];
             }
-            else
-            {
-                response[0] = 0; // Not connected status
-            }
+            _addDebugLog("IP response: STA mode connected, IP=" + ip.toString());
         }
         else
         {
-            // Network not available
             response[0] = 0; // Not connected status
-            _addDebugLog("IP request: Network not available");
+            _addDebugLog("IP response: Not connected (no SoftAP or STA)");
         }
 
         _lastReceivedCommand = 0; // Reset command
@@ -437,7 +452,7 @@ void I2CCommandHandler::requestEvent()
     {
         uint8_t response[8] = {0};
         
-        // Only return data if experiment is running and buffer has data
+        // If experiment is running and buffer has data, return buffer data
         if (_expState == EXP_RUNNING && !_bufferA.isEmpty())
         {
             SingleChannel data = _bufferA.first();
@@ -449,8 +464,31 @@ void I2CCommandHandler::requestEvent()
             response[5] = data.timestamp & 0xFF;
             response[6] = (data.channel_0 >> 8) & 0xFF;
             response[7] = data.channel_0 & 0xFF;
+            _addDebugLog("I2C: READ_DATA response from buffer (exp running)");
         }
-        // Otherwise return all zeros to indicate no data available
+        // If experiment is idle, return current sensor reading
+        else if (_expState == EXP_IDLE && _getCurrentSensorReading != nullptr)
+        {
+            int16_t currentReading = _getCurrentSensorReading();
+            unsigned long currentTimestamp = millis();
+            
+            // Return current sensor reading with current timestamp
+            // Setting is 0 when idle (no heater setting)
+            response[0] = 0; // Setting high byte
+            response[1] = 0; // Setting low byte
+            response[2] = (currentTimestamp >> 24) & 0xFF;
+            response[3] = (currentTimestamp >> 16) & 0xFF;
+            response[4] = (currentTimestamp >> 8) & 0xFF;
+            response[5] = currentTimestamp & 0xFF;
+            response[6] = (currentReading >> 8) & 0xFF;
+            response[7] = currentReading & 0xFF;
+            _addDebugLog("I2C: READ_DATA response from current sensor (exp idle), reading=" + String(currentReading));
+        }
+        // Fallback: return zeros if sensor callback not available
+        else
+        {
+            _addDebugLog("I2C: READ_DATA no data available (exp=" + String(_expState) + ", callback=" + String(_getCurrentSensorReading != nullptr ? "ok" : "null") + ")");
+        }
         
         _lastReceivedCommand = 0; // Reset command
         Wire.write(response, 8);
